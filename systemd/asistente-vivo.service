@@ -1,0 +1,19 @@
+[Unit]
+Description=Vox Verbi v3.0 Living Catholic Assistant
+After=network.target sound.target systemd-udev-settle.service llama-server.service
+Requires=llama-server.service
+
+[Service]
+Type=simple
+User=wildu
+SupplementaryGroups=audio video render
+WorkingDirectory=/home/wildu/llama.cpp
+Environment="PYTHONPATH=/home/wildu/llama.cpp"
+ExecStartPre=/bin/sh -c "for i in $(seq 1 30); do grep -q S330 /proc/asound/cards 2>/dev/null && break; sleep 0.5; done; amixer -c S330 sset 'Anker PowerConf S330 Playback' 127 on 2>/dev/null || true; amixer -c S330 sset 'Anker PowerConf S330 Capture' 127 on 2>/dev/null || true"
+ExecStartPre=/bin/sh -c "for i in $(seq 1 90); do curl -sf http://127.0.0.1:8080/health >/dev/null && exit 0; sleep 0.5; done"
+ExecStart=/home/wildu/llama.cpp/venv/bin/python -m vox_verbi.main
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

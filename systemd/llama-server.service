@@ -1,0 +1,17 @@
+[Unit]
+Description=Llama.cpp LLM Server (Gemma 4 E4B Instruct Vulkan)
+After=network.target systemd-udev-settle.service
+
+[Service]
+Type=simple
+User=wildu
+SupplementaryGroups=video render
+WorkingDirectory=/home/wildu/llama.cpp
+ExecStartPre=+/bin/sh -c "for g in /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor; do echo performance > $g 2>/dev/null || true; done"
+ExecStartPre=/bin/sh -c "for i in $(seq 1 60); do /home/wildu/llama.cpp/build/bin/llama-server --list-devices 2>&1 | grep -q Vulkan0 && exit 0; sleep 0.5; done"
+ExecStart=/home/wildu/llama.cpp/build/bin/llama-server -m models/gemma-4-E4B-it-Q4_K_M.gguf -ngl 99 -fa on -c 4096 -np 1 -ctk q8_0 -ctv q8_0 -rea off --reasoning-budget 0 --split-mode none --port 8080
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

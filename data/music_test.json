@@ -1,0 +1,97 @@
+{
+  "code_master": "VOX_VERBI_MUSICA_INSTRUMENTAL",
+  "general_commands": [
+    "vox verbi inspiranos",
+    "vox verbi pon musica instrumental",
+    "vox verbi ambienta la palabra",
+    "vox verbi acompaname con musica de fondo",
+    "vox verbi musica para predicar"
+  ],
+  "tracks": [
+    {
+      "id": "MUS-001",
+      "name": "Huellas de San Francisco",
+      "category": "Franciscana / sencillez y contemplación",
+      "commands": [
+        "vox verbi llevanos a la sencillez"
+      ],
+      "url": "[https://www.youtube.com/watch?v=LKTFPq8yTxg](https://www.youtube.com/watch?v=LKTFPq8yTxg)",
+      "local_file": "media/musica/MUS-001.ogg"
+    },
+    {
+      "id": "MUS-002",
+      "name": "Serenidad interior",
+      "category": "Música tranquila / relajación",
+      "commands": [
+        "vox verbi serenanos el alma"
+      ],
+      "url": "[https://www.youtube.com/watch?v=fODMS7WQWho](https://www.youtube.com/watch?v=fODMS7WQWho)",
+      "start_offset_sec": 2054,
+      "local_file": "media/musica/MUS-002.ogg"
+    },
+    {
+      "id": "MUS-003",
+      "name": "La Palabra que ilumina",
+      "category": "Fondo instrumental para predicación",
+      "commands": [
+        "vox verbi inspiranos",
+        "vox verbi pon musica instrumental",
+        "vox verbi ambienta la palabra",
+        "vox verbi acompaname con musica de fondo",
+        "vox verbi musica para predicar"
+      ],
+      "url": "[https://www.youtube.com/watch?v=otBWC_4owDs](https://www.youtube.com/watch?v=otBWC_4owDs)",
+      "local_file": "media/musica/MUS-003.ogg"
+    },
+    {
+      "id": "MUS-004",
+      "name": "Silencio del corazón",
+      "category": "Oración y recogimiento",
+      "commands": [
+        "vox verbi abre un espacio de silencio"
+      ],
+      "url": "[https://www.youtube.com/watch?v=9qGr40bhyMk](https://www.youtube.com/watch?v=9qGr40bhyMk)",
+      "local_file": "media/musica/MUS-004.ogg"
+    },
+    {
+      "id": "MUS-005",
+      "name": "En tus manos, Señor",
+      "category": "Oración emotiva / entrega y transición Al Paraíso",
+      "commands": [
+        "vox verbi abre el corazon"
+      ],
+      "url": "[https://www.youtube.com/watch?v=wZ7KaCZ6i44](https://www.youtube.com/watch?v=wZ7KaCZ6i44)",
+      "local_file": "media/musica/MUS-005.ogg"
+    },
+    {
+      "id": "MUS-006",
+      "name": "Al encuentro de Jesús",
+      "category": "Contemplación y encuentro personal",
+      "commands": [
+        "vox verbi sumergenos en tu presencia"
+      ],
+      "url": "[https://www.youtube.com/watch?v=2gaeVMz_1x0](https://www.youtube.com/watch?v=2gaeVMz_1x0)",
+      "local_file": "media/musica/MUS-006.ogg"
+    }
+  ],
+  "control_commands": {
+    "MUS-CTRL-04": {
+      "commands": [
+        "vox verbi silencio"
+      ],
+      "action": "PAUSE_OR_STOP_IMMEDIATELY"
+    },
+    "MUS-CTRL-05": {
+      "commands": [
+        "vox verbi continua la musica"
+      ],
+      "action": "RESUME"
+    },
+    "MUS-CTRL-06": {
+      "commands": [
+        "vox verbi termina la musica"
+      ],
+      "action": "STOP_FADEOUT"
+    }
+  }
+}
