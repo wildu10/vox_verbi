@@ -58,6 +58,7 @@ WAKE_TARGETS_2 = [
     "box barbi", "ghost burby", "ghost verbi", "ghost berbi", "gost verbi",
     "gost berbi", "vox berbi", "vox derbi", "vos pervi", "bos pervi",
     "vox vervi", "box vervi", "bos vervi", "vos vervi", "box bervi", "vox bervi",
+    "vover by", "bover by", "over by",
     "los berbi", "los verbis", "dos verbi", "dos berbi",
     "mos berbi", "mos verbi", "was berbi", "was verbi", "mas verbi",
     "pues verbi", "por verbi", "boso verbi",
@@ -67,6 +68,7 @@ WAKE_TARGETS_1 = [
     "busverby", "busverbi", "bosberbi", "bosbergvi", "bosberg", "voxverbi",
     "vosverbi", "boxverbi", "boxverby", "bosverby", "bosbiervi", "bosbierby", "busberby",
     "voxvervi", "boxvervi", "bosvervi", "vosvervi", "boxbervi", "voxbervi",
+    "losverbi", "losverbis", "reservi", "reserbi", "roserbi", "roservi", "leservi", "leserbi",
     "busverb", "bosverb", "ghostburby", "ghostberbi", "ghostverbi",
     "gostburby", "gostberbi", "gosberbi", "gosverbi", "oxverbi", "oxberbi",
     "osperbi", "osberbi", "obsberby", "obsverbi", "bosberti", "vosberti",
@@ -113,7 +115,7 @@ def _repair_fused_post_wake(rest: str) -> str:
     r = re.sub(r"^(?:cos|kes|ques|case)\b", "qué es", r, flags=re.IGNORECASE)
     r = re.sub(r"^definitivamente([.!?]*)$", r"defínete\1", r, flags=re.IGNORECASE)
     r = re.sub(
-        r"\b(?:definity|definite|definirte|definitiva|definito|de\s+finete|define\s+te|defini\s+te)\b",
+        r"\b(?:definity|definite|definirte|definitiva|definito|de\s+finete|define\s+te|defini\s+te|the\s+finite)\b",
         "defínete",
         r,
         count=1,
@@ -587,6 +589,15 @@ class CommandRouter:
         prefixed = norm_query if norm_query.startswith("vox verbi ") else f"vox verbi {norm_query}"
         if prefixed in self.exact_map:
             return self.exact_map[prefixed]
+
+        # Deterministic universal stop ('Vox Verbi, para' / 'detente' / 'para la música' / 'para por favor')
+        body_stop = re.sub(r"^vox\s+verbi\s+", "", prefixed).strip()
+        if re.match(
+            r"^(?:por\s+favor\s+|ya\s+)?(?:detent\w*|deten\b|detener\b|detenga\w*|para\b|parar\b|basta\b|calla\w*|cancela\w*|alto\b)"
+            r"(?:\s+(?:ya|ahora|todo|por\s+favor|lo\s+que\s+estas\s+haciendo|de\s+hablar|la\s+musica|musica|el\s+audio|la\s+lectura))*$",
+            body_stop,
+        ):
+            return {"command": prefixed, "action": "STOP_ALL", "priority": 98}
 
         guia_hit = self._match_guia_intent(prefixed)
         if guia_hit:

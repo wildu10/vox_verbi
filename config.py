@@ -36,8 +36,9 @@ STT_HOTWORDS = None
 # --- VAD & WAKE-WORD SENSITIVITY SETTINGS ---
 VAD_AGGRESSIVENESS = 2            # Balanced sensitivity (preserves soft /v/ and /b/ onsets in pre-roll)
 RMS_THRESHOLD_IDLE = 360.0        # Ignores distant room murmurs (<360) while 1.65s pre-roll captures soft 'Vox Verbi' onsets
-RMS_THRESHOLD_WITH_MUSIC = 400.0  # Threshold over ducked background music
+RMS_THRESHOLD_WITH_MUSIC = 540.0  # Minimum floor over background music (paired with adaptive ambient RMS tracker)
 RMS_THRESHOLD_SPEAKING = 780.0    # Barge-in threshold calibrated for 100% speakerphone volume (for 'Vox Verbi, detente')
+MUSIC_OUTPUT_SCALE = 0.48         # Hardware balance at 100% master volume so ambient music never drowns voice commands
 VAD_ONSET_MIN_VOICED = 6          # 6 of 12 chunks (180ms) of clear speech to trigger
 VAD_RING_LEN = 12                 # 360ms onset window
 VAD_PREROLL_LEN = 55              # 1.65s pre-roll audio preserved before VAD trigger

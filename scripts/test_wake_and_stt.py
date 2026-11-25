@@ -36,6 +36,9 @@ def test_historical_log_failures():
         ("Boxverby Definite", "defínete", "READ_PRESENTACION", "SEC_11"),
         ("Voxvervi para", "para", "STOP_ALL", None),
         ("Boxverbipara.", "para", "STOP_ALL", None),
+        ("Reservi para la música.", "para la música", "MUSIC_STOP", None),
+        ("Vox Verbi, para por favor", "para por favor", "STOP_ALL", None),
+        ("Vox Verbi, detente ya", "detente ya", "STOP_ALL", None),
     ]
 
     for raw, exp_sub, exp_action, exp_target in positive_cases:
@@ -199,7 +202,7 @@ def test_stop_everything_and_paraiso_protection():
     assert not app.mixer._stop_speech_event.is_set(), "FAIL: _stop_speech_event remained set on subsequent streaming query!"
     print("  [PASS] 'Vox Verbi, detente' stops active action AND subsequent streaming queries play cleanly!")
 
-    # 4C. Verify 'Al Paraíso' and 'Adoración' CANNOT be stopped by 'Vox Verbi, detente'!
+    # 4C. Verify 'Al Paraíso' CANNOT be stopped by 'Vox Verbi, detente / para', whereas everything else (music, stories, Adoración) CAN!
     app.mixer.play_music("MUS-005")
     app.in_al_paraiso = True
     try:
@@ -209,11 +212,17 @@ def test_stop_everything_and_paraiso_protection():
     finally:
         app.in_al_paraiso = False
 
+    # Verify normal music AND post-Paraíso Adoración stop cleanly on 'Vox Verbi, para / detente'
     app.state.enter_adoracion(mixer=app.mixer, track="MUS-005")
+    # Regular questions during Adoración are STILL blocked in silence (Rule 53)
+    app.handle_query("Vox Verbi, ¿qué es la fe?")
+    assert app.state.is_adoracion() is True, "FAIL: Regular questions must NOT exit Adoración!"
+    # Explicit 'Vox Verbi, para' / 'detente' stops everything (only Al Paraíso is immune!)
     stopped_ador = app.stop_everything()
-    assert stopped_ador is False, "FAIL: 'Vox Verbi, detente' must NOT stop Adoración!"
-    app.state.exit_adoracion(mixer=app.mixer)
-    print("  [PASS] 'Vox Verbi, detente' strictly ignored during 'Al Paraíso' and 'Adoración'")
+    assert stopped_ador is True and not app.state.is_adoracion() and not app.mixer.is_playing_music, (
+        "FAIL: 'Vox Verbi, para/detente' must stop everything except Al Paraíso!"
+    )
+    print("  [PASS] 'Vox Verbi, para/detente' stops everything (speech, stories, music, Adoración) EXCEPT 'Al Paraíso'!")
 
     # 4D. Verify secular off-topic filter blocks 'computador' and 'carro' immediately
     for off_q in ("Vox Verbi, ¿qué es un computador?", "Vox Verbi, ¿qué es un carro?"):

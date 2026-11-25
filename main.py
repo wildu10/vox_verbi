@@ -371,30 +371,32 @@ class VoxVerbiApp:
             logger.warning(f"Could not warm up LLM KV Cache: {e}")
 
     def is_protected_sacred_flow(self) -> bool:
-        """True during 'Al Paraíso' preparation reading or active Eucharistic Adoration."""
-        return self.in_al_paraiso or self.state.is_adoracion()
+        """True ONLY during 'Al Paraíso' sacred preparation reading (immune to 'Vox Verbi, para / detente')."""
+        return self.in_al_paraiso
 
     def is_worker_active(self) -> bool:
         return self._worker_thread is not None and self._worker_thread.is_alive()
 
     def stop_everything(self) -> bool:
         """
-        Immediately stops whatever Vox Verbi is currently doing (LLM stream, speech narration, or music),
-        EXCEPT during 'Al Paraíso' or Eucharistic Adoration!
+        Immediately stops whatever Vox Verbi is currently doing (LLM stream, speech narration, music, or Adoración),
+        EXCEPT during 'Al Paraíso'!
         """
-        if self.is_protected_sacred_flow():
-            logger.info("🕊️ [PROTECTED] 'Vox Verbi, detente' ignorado durante Al Paraíso / Adoración.")
+        if self.in_al_paraiso:
+            logger.info("🕊️ [PROTECTED] 'Vox Verbi, para/detente' ignorado durante Al Paraíso.")
             return False
 
         self.llm.abort_stream()
         self.mixer.stop_speech()
-        if self.mixer.is_playing_music:
-            self.mixer.stop_music(fade_out_sec=0.6)
+        if self.state.is_adoracion():
+            self.state.exit_adoracion(mixer=self.mixer)
+        elif self.mixer.is_playing_music:
+            self.mixer.stop_music(fade_out_sec=0.5)
         self.state.reset_duration()
         wt = self._worker_thread
         if wt is not None and wt.is_alive() and wt is not threading.current_thread():
             wt.join(timeout=0.5)
-        logger.info("🛑 [STOP_ALL] Acción en curso detenida inmediatamente por 'Vox Verbi, detente'.")
+        logger.info("🛑 [STOP_ALL] Acción en curso detenida inmediatamente por 'Vox Verbi, para/detente'.")
         return True
 
     def dispatch_async(self, user_text: str, route_match=None):
@@ -415,8 +417,11 @@ class VoxVerbiApp:
 
         norm = normalize_text(user_text)
         if self.state.is_adoracion():
+            direct_m = route_match or self.router.route(user_text)
+            is_stop_all = bool(direct_m and direct_m.get("action") in ("STOP_ALL", "STOP_SPEECH"))
             is_exit_adoracion = bool(
-                "finalizamos la adoracion" in norm
+                is_stop_all
+                or "finalizamos la adoracion" in norm
                 or re.search(
                     r"\b(finaliz\w*|termin\w*|conclu\w*|salir\w*|acaba\w*|deten\w*|para|parar|apaga\w*)\b.*\b(adoraci\w*|doraci\w*|oraci\w*|vibraci\w*|santisimo|musica)\b",
                     norm,
@@ -424,9 +429,10 @@ class VoxVerbiApp:
                 or re.search(r"\bfinal\s+a\s+la\s+musica\b", norm)
             )
             if is_exit_adoracion:
-                logger.info("[ADORACION] Exit command received")
+                logger.info("[ADORACION] Exit/Stop command received")
                 self.state.exit_adoracion(mixer=self.mixer)
-                self.speak("Hemos concluido el tiempo de adoración eucarística.")
+                if not is_stop_all:
+                    self.speak("Hemos concluido el tiempo de adoración eucarística.")
             else:
                 logger.info("[ADORACION] Query ignored (Rule 53 total silence)")
             return
@@ -479,13 +485,15 @@ class VoxVerbiApp:
                 self.mixer.play_music(match.get("track_id", "MUS-003"))
                 return
             elif action == "MUSIC_PAUSE":
-                self.mixer.pause_music()
+                if not self.in_al_paraiso:
+                    self.mixer.pause_music()
                 return
             elif action == "MUSIC_RESUME":
                 self.mixer.resume_music()
                 return
             elif action == "MUSIC_STOP":
-                self.mixer.stop_music()
+                if not self.in_al_paraiso:
+                    self.mixer.stop_music(fade_out_sec=0.5)
                 return
             elif action in ("READ_PRESENTACION", "READ_RELATO"):
                 text = self.router.get_canonical_text(match)
@@ -661,9 +669,11 @@ def main():
     voiced_frames = []
     triggered = False
     started_during_speech = False
+    started_during_music = False
     was_raw_speaking = False
     was_speaking_now = False
     peak_rms = 0.0
+    ambient_rms = 180.0
 
     def _flush_after_response():
         while not frame_queue.empty():
@@ -742,17 +752,28 @@ def main():
             was_speaking_now = speaking_now
             music_active = app.mixer.is_playing_music and not app.mixer.is_paused
 
+            # Track continuous ambient/music RMS floor while idle so background music never self-triggers VAD
+            if not triggered and not speaking_now:
+                if rms < ambient_rms:
+                    ambient_rms = 0.90 * ambient_rms + 0.10 * rms
+                elif not app.mixer.ducking_active:
+                    ambient_rms = 0.97 * ambient_rms + 0.03 * min(rms, 650.0)
+
             if speaking_now:
-                base_floor = getattr(config, "RMS_THRESHOLD_SPEAKING", 420.0)
+                base_floor = getattr(config, "RMS_THRESHOLD_SPEAKING", 780.0)
             elif music_active:
-                base_floor = config.RMS_THRESHOLD_WITH_MUSIC
+                base_floor = max(config.RMS_THRESHOLD_WITH_MUSIC, min(920.0, ambient_rms * 1.85 + 160.0))
             else:
                 base_floor = config.RMS_THRESHOLD_IDLE
 
             if triggered:
                 if rms > peak_rms:
                     peak_rms = rms
-                active_floor = min(450.0, max(base_floor * 0.80, peak_rms * 0.14))
+                if started_during_music or music_active:
+                    # Music is ducked to 0.04 while recording, so human speech ends cleanly as soon as RMS drops
+                    active_floor = max(380.0, min(820.0, max(ambient_rms * 0.85, peak_rms * 0.16)))
+                else:
+                    active_floor = max(base_floor * 0.80, min(600.0, peak_rms * 0.14))
                 is_speech_effective = raw_speech and (rms > active_floor)
             else:
                 is_speech_effective = raw_speech and (rms > base_floor)
@@ -763,36 +784,52 @@ def main():
                 num_voiced = sum(1 for _, sp in ring_buffer if sp)
 
                 if not speaking_now:
-                    if music_active and num_voiced >= 3 and not app.mixer.ducking_active:
-                        app.mixer.set_ducking(True, ducked_vol=0.08)
+                    if music_active and num_voiced >= 2 and not app.mixer.ducking_active:
+                        app.mixer.set_ducking(True, ducked_vol=0.04)
                     elif music_active and num_voiced == 0 and app.mixer.ducking_active:
                         app.mixer.set_ducking(False)
 
-                if num_voiced >= config.VAD_ONSET_MIN_VOICED:
+                onset_req = 5 if music_active else config.VAD_ONSET_MIN_VOICED
+                if num_voiced >= onset_req:
                     triggered = True
                     started_during_speech = speaking_now
+                    started_during_music = music_active
                     peak_rms = rms
                     if not speaking_now:
-                        logger.info(f"🗣️ Voz detectada (RMS={rms:.0f})")
+                        logger.info(f"🗣️ Voz detectada (RMS={rms:.0f}, music={music_active})")
                         if music_active:
-                            app.mixer.set_ducking(True, ducked_vol=0.08)
-                    voiced_frames = list(pre_roll_buffer)
+                            app.mixer.set_ducking(True, ducked_vol=0.04)
+                    # Shorter pre-roll (0.60s = 20 chunks) during music so un-ducked music doesn't mask 'Vox Verbi'
+                    if music_active:
+                        voiced_frames = list(pre_roll_buffer)[-20:]
+                    else:
+                        voiced_frames = list(pre_roll_buffer)
                     ring_buffer.clear()
                     silence_buffer.clear()
             else:
                 voiced_frames.append(chunk)
                 silence_buffer.append((chunk, is_speech_effective))
 
-                req_sil_len = 25 if started_during_speech else silence_buffer.maxlen
+                if started_during_speech:
+                    req_sil_len = 25
+                    max_chunks = 160
+                elif started_during_music or music_active:
+                    req_sil_len = 28
+                    max_chunks = 220
+                else:
+                    req_sil_len = silence_buffer.maxlen
+                    max_chunks = config.MAX_RECORD_CHUNKS
+
                 recent_sil = list(silence_buffer)[-req_sil_len:]
                 num_unvoiced = sum(1 for _, sp in recent_sil if not sp)
-                silence_cut = (len(recent_sil) == req_sil_len and num_unvoiced >= int(0.82 * req_sil_len))
-                timeout_cut = len(voiced_frames) >= (160 if started_during_speech else config.MAX_RECORD_CHUNKS)
+                silence_cut = (len(recent_sil) == req_sil_len and num_unvoiced >= int(0.80 * req_sil_len))
+                timeout_cut = len(voiced_frames) >= max_chunks
 
                 if silence_cut or timeout_cut:
                     triggered = False
                     was_barge_in = started_during_speech or app.mixer.is_busy() or app.is_worker_active()
                     started_during_speech = False
+                    started_during_music = False
                     peak_rms = 0.0
                     audio_data = b"".join(voiced_frames)
                     tail_frames = voiced_frames[-20:] if len(voiced_frames) >= 20 else list(voiced_frames)

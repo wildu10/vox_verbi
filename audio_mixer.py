@@ -292,6 +292,7 @@ class AudioMixer:
         self.ducking_active = False
 
         self.lock = threading.Lock()
+        self._fade_gen = 0
         self._active_channel = None
         self._stop_speech_event = threading.Event()
         self._mem_tts_cache = {}
@@ -332,7 +333,8 @@ class AudioMixer:
                 if self._active_channel is not None and self._active_channel.get_busy():
                     self._active_channel.set_volume(cur_master)
                 if HAS_PYGAME and self.output_alsa is not None and pygame.mixer.get_init() and self.is_playing_music:
-                    pygame.mixer.music.set_volume(cur_music * cur_master)
+                    hw_scale = float(getattr(config, "MUSIC_OUTPUT_SCALE", 0.48))
+                    pygame.mixer.music.set_volume(cur_music * cur_master * hw_scale)
             except Exception:
                 pass
         logger.info(f"🔉 Master output volume set to {int(round(cur_master * 100))}% ({cur_master:.2f})")
@@ -583,15 +585,20 @@ class AudioMixer:
             self.music_volume = config.MUSIC_GAIN_NORMAL
             self.target_music_volume = config.MUSIC_GAIN_NORMAL
             self.ducking_active = False
+            self._fade_gen += 1
+            hw_scale = float(getattr(config, "MUSIC_OUTPUT_SCALE", 0.48))
 
             if HAS_PYGAME and self.output_alsa is not None and pygame.mixer.get_init():
                 try:
                     pygame.mixer.music.load(filepath)
-                    pygame.mixer.music.set_volume(self.music_volume * self.master_volume)
+                    pygame.mixer.music.set_volume(self.music_volume * self.master_volume * hw_scale)
                     pygame.mixer.music.play(loops=-1, start=start_offset_sec, fade_ms=int(fade_in_sec * 1000))
                     self.is_playing_music = True
                     self.is_paused = False
-                    logger.info(f"Playing music: {filepath} at vol {self.music_volume} (master={self.master_volume:.2f})")
+                    logger.info(
+                        f"Playing music: {filepath} at vol {self.music_volume} "
+                        f"(master={self.master_volume:.2f}, hw_scale={hw_scale:.2f})"
+                    )
                     return True
                 except Exception as e:
                     logger.error(f"Error loading music in pygame: {e}")
@@ -605,18 +612,22 @@ class AudioMixer:
         with self.lock:
             self.ducking_active = True
             self.target_music_volume = target_vol
+            self._fade_gen += 1
+            my_gen = self._fade_gen
+            start_vol = self.music_volume
+        hw_scale = float(getattr(config, "MUSIC_OUTPUT_SCALE", 0.48))
 
         def _fade():
-            steps = 10
-            sleep_time = duration_sec / steps
-            with self.lock:
-                start_vol = self.music_volume
+            steps = max(1, int(round(duration_sec / 0.025)))
+            sleep_time = max(0.01, duration_sec / steps)
             for i in range(1, steps + 1):
                 cur_vol = start_vol + (target_vol - start_vol) * (i / steps)
                 with self.lock:
+                    if self._fade_gen != my_gen or not self.is_playing_music:
+                        return
                     self.music_volume = cur_vol
                     if HAS_PYGAME and self.output_alsa is not None and pygame.mixer.get_init():
-                        pygame.mixer.music.set_volume(cur_vol * self.master_volume)
+                        pygame.mixer.music.set_volume(cur_vol * self.master_volume * hw_scale)
                 time.sleep(sleep_time)
 
         threading.Thread(target=_fade, daemon=True).start()
@@ -625,27 +636,31 @@ class AudioMixer:
         with self.lock:
             self.ducking_active = False
             self.target_music_volume = target_vol
+            self._fade_gen += 1
+            my_gen = self._fade_gen
+            start_vol = self.music_volume
+        hw_scale = float(getattr(config, "MUSIC_OUTPUT_SCALE", 0.48))
 
         def _fade():
-            steps = 10
-            sleep_time = duration_sec / steps
-            with self.lock:
-                start_vol = self.music_volume
+            steps = max(1, int(round(duration_sec / 0.03)))
+            sleep_time = max(0.01, duration_sec / steps)
             for i in range(1, steps + 1):
                 cur_vol = start_vol + (target_vol - start_vol) * (i / steps)
                 with self.lock:
+                    if self._fade_gen != my_gen or not self.is_playing_music:
+                        return
                     self.music_volume = cur_vol
                     if HAS_PYGAME and self.output_alsa is not None and pygame.mixer.get_init():
-                        pygame.mixer.music.set_volume(cur_vol * self.master_volume)
+                        pygame.mixer.music.set_volume(cur_vol * self.master_volume * hw_scale)
                 time.sleep(sleep_time)
 
         threading.Thread(target=_fade, daemon=True).start()
 
-    def set_ducking(self, active: bool, ducked_vol: float = 0.10):
+    def set_ducking(self, active: bool, ducked_vol: float = 0.05):
         if active:
-            self.duck_music(target_vol=ducked_vol, duration_sec=0.15)
+            self.duck_music(target_vol=ducked_vol, duration_sec=0.08)
         else:
-            self.unduck_music(target_vol=config.MUSIC_GAIN_NORMAL, duration_sec=0.3)
+            self.unduck_music(target_vol=config.MUSIC_GAIN_NORMAL, duration_sec=0.35)
 
     def pause_music(self):
         with self.lock:
@@ -660,11 +675,15 @@ class AudioMixer:
             if HAS_PYGAME and self.output_alsa is not None and pygame.mixer.get_init():
                 pygame.mixer.music.unpause()
             logger.info("Music resumed")
+        if self.ducking_active or self.music_volume < config.MUSIC_GAIN_NORMAL * 0.9:
+            self.unduck_music(target_vol=config.MUSIC_GAIN_NORMAL, duration_sec=0.35)
 
     def stop_music(self, fade_out_sec: float = 4.0):
         with self.lock:
+            self._fade_gen += 1
             self.is_playing_music = False
             self.is_paused = False
+            self.ducking_active = False
             if HAS_PYGAME and self.output_alsa is not None and pygame.mixer.get_init():
                 pygame.mixer.music.fadeout(int(fade_out_sec * 1000))
             logger.info(f"Music stopped with {fade_out_sec}s fadeout")
