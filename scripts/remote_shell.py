@@ -7,7 +7,7 @@ if hasattr(sys.stdout, "reconfigure"):
 if hasattr(sys.stderr, "reconfigure"):
     sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
-HOST = os.environ.get("VOX_VERBI_HOST", "192.168.1.9")
+HOST = os.environ.get("VOX_VERBI_HOST", "192.168.1.11")
 USER = os.environ.get("VOX_VERBI_USER", "wildu")
 PASS = os.environ.get("VOX_VERBI_PASS", "4123")
 

@@ -195,9 +195,10 @@ class LLMCatequist:
     def build_prompt(self, user_query: str, rag_records: List[Dict[str, Any]], duration_sec: int = 30) -> tuple[str, str, int]:
         q_lower = user_query.lower()
         mag_cues = (
-            "dei verbum", "dei verb", "de verb", "berbun", "lumen gentium", "lumen gencium", "lumen yentium",
+            "dei verbum", "dei verb", "de verb", "berbun", "iberbum", "deiberbum", "david boom",
+            "lumen gentium", "lumen gencium", "lumen yentium",
             "sacrosanctum", "sacro sanctum", "concilium", "gaudium et spes", "gaudium",
-            "deus caritas", "uscaritas", "spe salvi", "espe salvi",
+            "deus caritas", "uscaritas", "euskaritas", "spe salvi", "espe salvi",
             "lumen fidei", "dives in misericordia", "ecclesia de eucharistia", "ecclesia de eucaristia",
             "fides et ratio", "fides et racio", "evangelii gaudium", "mysterium fidei", "catecismo", "compendio",
         )

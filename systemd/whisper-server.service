@@ -1,0 +1,18 @@
+[Unit]
+Description=Whisper.cpp STT Server (Radeon 680M Vulkan - ggml-small-q8_0)
+After=network.target systemd-udev-settle.service
+
+[Service]
+Type=simple
+User=wildu
+SupplementaryGroups=video render
+WorkingDirectory=/home/wildu/whisper.cpp
+Environment="LD_LIBRARY_PATH=/home/wildu/whisper.cpp/build/src:/home/wildu/whisper.cpp/build/ggml/src:/home/wildu/whisper.cpp/build/ggml/src/ggml-vulkan"
+ExecStartPre=/bin/sh -c "for i in $(seq 1 60); do [ -e /dev/dri/renderD128 ] && exit 0; sleep 0.5; done"
+ExecStart=/home/wildu/whisper.cpp/build/bin/whisper-server -m /home/wildu/voice_models/stt/whisper_cpp/ggml-small-q8_0.bin --host 127.0.0.1 --port 8090 -l es -t 6 -bo 1 -bs 1 -mc 0 -et 2.20 -nf -sns -fa
+Restart=always
+RestartSec=2
+TimeoutStopSec=5
+
+[Install]
+WantedBy=multi-user.target

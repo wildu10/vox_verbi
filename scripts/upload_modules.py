@@ -1,7 +1,7 @@
 import os
 import paramiko
 
-HOSTNAME = os.environ.get("VOX_VERBI_HOST", "192.168.1.9")
+HOSTNAME = os.environ.get("VOX_VERBI_HOST", "192.168.1.11")
 USERNAME = os.environ.get("VOX_VERBI_USER", "wildu")
 PASSWORD = os.environ.get("VOX_VERBI_PASS", "4123")
 
@@ -24,6 +24,7 @@ files_to_upload = [
     ("test_vox_verbi_suite.py", f"{REMOTE_PKG_DIR}/scripts/test_vox_verbi_suite.py"),
     ("test_wake_and_stt.py", f"{REMOTE_PKG_DIR}/scripts/test_wake_and_stt.py"),
     ("run_live_benchmark.py", f"{REMOTE_PKG_DIR}/scripts/run_live_benchmark.py"),
+    ("vox_wifi_manager.py", f"{REMOTE_PKG_DIR}/scripts/vox_wifi_manager.py"),
 ]
 
 client = paramiko.SSHClient()

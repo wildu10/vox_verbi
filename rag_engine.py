@@ -36,11 +36,11 @@ def tokenize_es(text: str) -> list[str]:
 
 # Document cue -> canonical short citation substring for precise Magisterial/Patristic targeting
 DOC_TARGET_MAP = [
-    (r"\b(dei\s*verb\w*|de\s*verb\w*|dei\s*berb\w*|de\s*berb\w*|berbun\w*)\b", "dei verbum"),
+    (r"\b(dei\s*verb\w*|de\s*verb\w*|dei\s*berb\w*|de\s*berb\w*|de\s*iberb\w*|deiberb\w*|iberb\w*|berbun\w*|david\s*boom)\b", "dei verbum"),
     (r"\b(lumen\s*[gjy]en[tc]i\w*)\b", "lumen gentium"),
     (r"\b(sacrosan\w*|sacro\s*san\w*|concilium)\b", "sacrosanctum concilium"),
     (r"\b(gaudi\w*\s*et\s*spes|gaudium)\b", "gaudium et spes"),
-    (r"\b(deus\s*caritas\w*|de\s*uscaritas\w*|uscaritas\w*)\b", "deus caritas est"),
+    (r"\b(deus\s*caritas\w*|de\s*uscaritas\w*|e?us[ck]aritas\w*)\b", "deus caritas est"),
     (r"\b(e?spe\s*salvi)\b", "spe salvi"),
     (r"\b(lumen\s*fidei)\b", "lumen fidei"),
     (r"\b(dives\s*in\s*misericordia)\b", "dives in misericordia"),

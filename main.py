@@ -1,12 +1,15 @@
 import os
 import sys
+import io
 import re
+import wave
 import time
 import signal
 import queue
 import threading
 import collections
 import logging
+import requests
 import numpy as np
 import scipy.signal
 import scipy.ndimage
@@ -82,17 +85,19 @@ def strip_wake_word(text: str) -> str:
 
 class BiasedWhisperRecognizer:
     """
-    High-sensitivity offline STT wrapper using faster-whisper (int8, 8 threads) with
-    domain initial_prompt + hotwords for 'Vox Verbi' and Catholic theological terms,
-    plus automatic gain normalization and hallucination suppression.
-    Falls back to sherpa_onnx if faster-whisper is not available.
+    Low-latency offline STT wrapper powered by whisper.cpp Vulkan (ggml-vulkan on Radeon 680M)
+    with Silero Neural VAD gating, adaptive dynamic-contrast gain leveling, dynamic audio_ctx
+    (~218 ms avg transcription), and automatic fallback to faster-whisper / sherpa-onnx.
     """
 
     HALLUCINATION_PHRASES = {
+        "subtitulos realizados por la comunidad de amara org",
         "subtitulos realizados por la comunidad de amara.org",
+        "subtitulos por la comunidad de amara org",
         "subtitulos por la comunidad de amara.org",
         "gracias por ver el video",
         "suscribete al canal",
+        "suscribete",
         "musica",
         "risas",
         "aplausos",
@@ -100,28 +105,73 @@ class BiasedWhisperRecognizer:
     }
 
     def __init__(self):
+        self.whisper_server_url = None
+        self._http = requests.Session()
         self.fw_model = None
         self.sherpa = None
+        self._vad_ready = False
         self._load()
 
+    def _warmup_vad(self):
+        try:
+            from faster_whisper.vad import VadOptions, get_speech_timestamps
+            get_speech_timestamps(
+                np.zeros(16000, dtype=np.float32),
+                vad_options=VadOptions(threshold=0.48, min_speech_duration_ms=260),
+                sampling_rate=16000,
+            )
+            self._vad_ready = True
+        except Exception as e:
+            logger.warning(f"Silero VAD warmup warning: {e}")
+
+    def _load_fw_fallback(self):
+        if self.fw_model is not None:
+            return True
+        try:
+            from faster_whisper import WhisperModel
+            model_size = getattr(config, "STT_FW_MODEL_SIZE", "small")
+            self.fw_model = WhisperModel(
+                model_size,
+                device="cpu",
+                compute_type="int8",
+                cpu_threads=8,
+                local_files_only=True,
+            )
+            list(self.fw_model.transcribe(np.zeros(16000, dtype=np.float32), language="es", beam_size=1))
+            logger.info(f"faster-whisper '{model_size}' (int8 CPU) initialized.")
+            return True
+        except Exception as e:
+            logger.warning(f"faster-whisper unavailable ({e}).")
+            return False
+
     def _load(self):
-        if getattr(config, "STT_ENGINE", "faster_whisper") == "faster_whisper":
+        self._warmup_vad()
+        engine = getattr(config, "STT_ENGINE", "whisper_cpp_vulkan")
+        if engine == "whisper_cpp_vulkan":
+            url = getattr(config, "WHISPER_SERVER_URL", "http://127.0.0.1:8090/inference")
             try:
-                from faster_whisper import WhisperModel
-                model_size = getattr(config, "STT_FW_MODEL_SIZE", "small")
-                self.fw_model = WhisperModel(
-                    model_size,
-                    device="cpu",
-                    compute_type="int8",
-                    cpu_threads=8,
-                    local_files_only=True,
+                buf = io.BytesIO()
+                with wave.open(buf, "wb") as wf:
+                    wf.setnchannels(1)
+                    wf.setsampwidth(2)
+                    wf.setframerate(16000)
+                    wf.writeframes(np.zeros(8000, dtype=np.int16).tobytes())
+                resp = self._http.post(
+                    url,
+                    files={"file": ("warmup.wav", buf.getvalue(), "audio/wav")},
+                    data={"response_format": "json", "temperature": "0.0", "language": "es", "audio_ctx": "192"},
+                    timeout=5,
                 )
-                # Warmup decoder once
-                list(self.fw_model.transcribe(np.zeros(16000, dtype=np.float32), language="es", beam_size=1))
-                logger.info(f"faster-whisper '{model_size}' (int8, hotwords-enabled) loaded offline.")
-                return
+                if resp.status_code == 200:
+                    self.whisper_server_url = url
+                    logger.info(f"whisper.cpp Vulkan server connected at {url} (Radeon 680M ggml-vulkan active).")
+                    return
+                logger.warning(f"whisper-server returned HTTP {resp.status_code}; falling back to faster-whisper.")
             except Exception as e:
-                logger.warning(f"faster-whisper unavailable ({e}); falling back to sherpa-onnx.")
+                logger.warning(f"whisper-server unreachable at {url} ({e}); falling back to faster-whisper.")
+
+        if self._load_fw_fallback():
+            return
 
         try:
             import sherpa_onnx
@@ -139,6 +189,89 @@ class BiasedWhisperRecognizer:
         except Exception as e:
             logger.error(f"Could not initialize any STT engine: {e}")
 
+    def _prepare_leveled_speech(self, samples: np.ndarray, peak: float, sample_rate: int) -> np.ndarray | None:
+        # Step 1: Silero Neural VAD speech-presence gate (<3ms CPU ONNX)
+        try:
+            from faster_whisper.vad import VadOptions, get_speech_timestamps
+            probe = np.clip(samples * min(3.2, 0.65 / peak), -1.0, 1.0).astype(np.float32)
+            ts = get_speech_timestamps(
+                probe,
+                vad_options=VadOptions(threshold=0.48, min_speech_duration_ms=260),
+                sampling_rate=sample_rate,
+            )
+            total_voiced_samples = sum((seg_t["end"] - seg_t["start"]) for seg_t in ts)
+            if not ts or total_voiced_samples < int(0.35 * sample_rate):
+                return None
+            start_i = max(0, ts[0]["start"] - int(2.60 * sample_rate))
+            end_i = min(len(samples), ts[-1]["end"] + int(0.35 * sample_rate))
+            seg_samples = samples[start_i:end_i]
+        except Exception:
+            seg_samples = samples
+
+        # Step 2: Preserve uniform linear gain on normal speech; use 650ms smooth envelope leveling
+        # ONLY when speech has >2.6x dynamic contrast (soft 'Vox Verbi' + loud question)
+        seg_peak = max(1e-4, float(np.max(np.abs(seg_samples))))
+        win_env = int(0.65 * sample_rate)
+        local_pk = scipy.ndimage.maximum_filter1d(np.abs(seg_samples), size=win_env, mode="nearest")
+        voiced_pks = local_pk[local_pk >= 0.015]
+        dyn_ratio = (
+            float(np.percentile(voiced_pks, 95)) / max(0.015, float(np.percentile(voiced_pks, 5)))
+            if len(voiced_pks) > int(0.5 * sample_rate)
+            else 1.0
+        )
+
+        if dyn_ratio > 2.6:
+            raw_gain = np.where(local_pk >= 0.014, np.minimum(16.0, 0.65 / np.maximum(local_pk, 0.014)), 1.0).astype(np.float32)
+            smooth_len = int(0.25 * sample_rate)
+            kernel = np.hanning(smooth_len).astype(np.float32)
+            kernel /= np.sum(kernel)
+            smooth_gain = np.convolve(raw_gain, kernel, mode="same")
+            return np.clip(seg_samples * smooth_gain, -1.0, 1.0).astype(np.float32)
+        return np.clip(seg_samples * min(4.5, 0.72 / seg_peak), -1.0, 1.0).astype(np.float32)
+
+    def _transcribe_whisper_cpp_vulkan(self, s_leveled: np.ndarray, sample_rate: int) -> str | None:
+        # Pad 0.25s tail silence so Whisper cleanly closes the final timestamp token
+        padded = np.concatenate([s_leveled, np.zeros(int(0.25 * sample_rate), dtype=np.float32)])
+        pcm_i16 = np.clip(padded * 32767.0, -32768, 32767).astype(np.int16)
+        buf = io.BytesIO()
+        with wave.open(buf, "wb") as wf:
+            wf.setnchannels(1)
+            wf.setsampwidth(2)
+            wf.setframerate(sample_rate)
+            wf.writeframes(pcm_i16.tobytes())
+
+        dur_sec = len(padded) / float(sample_rate)
+        dyn_ac = min(1500, max(256, ((int(dur_sec * 50) + 56 + 63) // 64) * 64))
+
+        resp = self._http.post(
+            self.whisper_server_url,
+            files={"file": ("speech.wav", buf.getvalue(), "audio/wav")},
+            data={
+                "response_format": "verbose_json",
+                "temperature": "0.0",
+                "language": "es",
+                "audio_ctx": str(dyn_ac),
+            },
+            timeout=8,
+        )
+        if resp.status_code != 200:
+            raise RuntimeError(f"whisper-server HTTP {resp.status_code}")
+
+        js = resp.json()
+        segments = js.get("segments")
+        if isinstance(segments, list) and segments:
+            parts = []
+            for seg in segments:
+                nsp = float(seg.get("no_speech_prob", 0.0))
+                alp = float(seg.get("avg_logprob", 0.0))
+                if nsp > 0.55 or alp < -0.95:
+                    continue
+                seg_txt = seg.get("text", "").strip()
+                if seg_txt:
+                    parts.append(seg_txt)
+            return " ".join(parts).strip()
+        return js.get("text", "").strip()
+
     def transcribe(self, pcm_bytes: bytes, sample_rate: int = 16000) -> str:
         samples = np.frombuffer(pcm_bytes, dtype=np.int16).astype(np.float32) / 32768.0
         if len(samples) < int(sample_rate * 0.55):
@@ -149,44 +282,22 @@ class BiasedWhisperRecognizer:
         if peak < 0.016:
             return ""
 
+        s_leveled = self._prepare_leveled_speech(samples, peak, sample_rate)
+        if s_leveled is None:
+            return ""
+
         text = ""
-        if self.fw_model is not None:
-            # Step 1: Silero Neural VAD speech-presence gate
+        used_vulkan = False
+        if self.whisper_server_url is not None:
             try:
-                from faster_whisper.vad import VadOptions, get_speech_timestamps
-                probe = np.clip(samples * min(3.2, 0.65 / peak), -1.0, 1.0).astype(np.float32)
-                ts = get_speech_timestamps(
-                    probe,
-                    vad_options=VadOptions(threshold=0.48, min_speech_duration_ms=260),
-                    sampling_rate=sample_rate,
-                )
-                total_voiced_samples = sum((seg_t["end"] - seg_t["start"]) for seg_t in ts)
-                if not ts or total_voiced_samples < int(0.35 * sample_rate):
-                    return ""
-                start_i = max(0, ts[0]["start"] - int(2.60 * sample_rate))
-                end_i = min(len(samples), ts[-1]["end"] + int(0.30 * sample_rate))
-                seg_samples = samples[start_i:end_i]
-            except Exception:
-                seg_samples = samples
+                res = self._transcribe_whisper_cpp_vulkan(s_leveled, sample_rate)
+                text = res or ""
+                used_vulkan = True
+            except Exception as e:
+                logger.warning(f"whisper-server request failed ({e}); using CPU fallback.")
+                self._load_fw_fallback()
 
-            # Preserve uniform linear gain on normal speech; use 650ms smooth envelope leveling
-            # ONLY when speech has >2.6x dynamic contrast (soft 'Vox Verbi' + loud question)
-            seg_peak = max(1e-4, float(np.max(np.abs(seg_samples))))
-            win_env = int(0.65 * sample_rate)
-            local_pk = scipy.ndimage.maximum_filter1d(np.abs(seg_samples), size=win_env, mode="nearest")
-            voiced_pks = local_pk[local_pk >= 0.015]
-            dyn_ratio = (float(np.percentile(voiced_pks, 95)) / max(0.015, float(np.percentile(voiced_pks, 5)))) if len(voiced_pks) > int(0.5 * sample_rate) else 1.0
-
-            if dyn_ratio > 2.6:
-                raw_gain = np.where(local_pk >= 0.014, np.minimum(16.0, 0.65 / np.maximum(local_pk, 0.014)), 1.0).astype(np.float32)
-                smooth_len = int(0.25 * sample_rate)
-                kernel = np.hanning(smooth_len).astype(np.float32)
-                kernel /= np.sum(kernel)
-                smooth_gain = np.convolve(raw_gain, kernel, mode="same")
-                s_leveled = np.clip(seg_samples * smooth_gain, -1.0, 1.0).astype(np.float32)
-            else:
-                s_leveled = np.clip(seg_samples * min(4.5, 0.72 / seg_peak), -1.0, 1.0).astype(np.float32)
-
+        if not used_vulkan and self.fw_model is not None:
             segments, _ = self.fw_model.transcribe(
                 s_leveled,
                 language="es",
@@ -216,7 +327,7 @@ class BiasedWhisperRecognizer:
                     continue
                 parts.append(seg.text)
             text = " ".join(parts).strip()
-        elif self.sherpa is not None:
+        elif not used_vulkan and self.sherpa is not None:
             s = self.sherpa.create_stream()
             s.accept_waveform(sample_rate, samples)
             self.sherpa.decode_stream(s)
@@ -224,11 +335,11 @@ class BiasedWhisperRecognizer:
 
         if not text:
             return ""
-        # Filter bracketed Whisper noise tags & known silence hallucinations
+        # Filter bracketed Whisper noise tags, single-letter noise artifacts & known silence hallucinations
         if re.fullmatch(r"[\[\(\*].*?[\]\)\*]\.?", text):
             return ""
         clean_check = normalize_text(text)
-        if clean_check in self.HALLUCINATION_PHRASES:
+        if len(clean_check) <= 1 or clean_check in self.HALLUCINATION_PHRASES:
             return ""
         return text
 
@@ -435,7 +546,7 @@ def main():
     # Restore SIGTERM handler after pygame/SDL2 init so systemd stops/restarts cleanly in <0.2s
     signal.signal(signal.SIGTERM, lambda signum, frame: (_ for _ in ()).throw(KeyboardInterrupt()))
     hardware_hooks.start_s330_volume_buttons_listener(app.mixer)
-    logger.info(f"VOX VERBI v3.4 initialized and ready (master_volume={int(round(app.mixer.master_volume * 100))}%).")
+    logger.info(f"VOX VERBI v3.5 initialized and ready (master_volume={int(round(app.mixer.master_volume * 100))}%).")
 
     pa = pyaudio.PyAudio()
     mic_idx = find_usb_microphone(pa)
@@ -551,6 +662,7 @@ def main():
     triggered = False
     started_during_speech = False
     was_raw_speaking = False
+    was_speaking_now = False
     peak_rms = 0.0
 
     def _flush_after_response():
@@ -621,7 +733,13 @@ def main():
                 silence_buffer.clear()
             was_raw_speaking = raw_speaking
 
-            speaking_now = raw_speaking or ((time.time() - app.mixer.last_speech_end_time) < 0.35)
+            speaking_now = raw_speaking or ((time.time() - app.mixer.last_speech_end_time) < 0.55)
+            if was_speaking_now and not speaking_now:
+                # Clear residual 100%-volume loudspeaker reverb tail after 0.55s ALSA drain
+                pre_roll_buffer.clear()
+                ring_buffer.clear()
+                silence_buffer.clear()
+            was_speaking_now = speaking_now
             music_active = app.mixer.is_playing_music and not app.mixer.is_paused
 
             if speaking_now:

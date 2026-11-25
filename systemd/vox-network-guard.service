@@ -1,0 +1,12 @@
+[Unit]
+Description=Vox Verbi Multi-Network Static IP Guard (.11 + 192.168.1.11)
+After=network-online.target systemd-networkd.service wpa_supplicant.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /usr/local/sbin/vox-wifi-manager --auto-guard
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

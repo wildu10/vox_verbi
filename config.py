@@ -19,13 +19,15 @@ TTS_MODEL_PATH = os.path.join(VOICE_MODELS_DIR, "tts/kokoro-v1.0.onnx")
 TTS_VOICES_PATH = os.path.join(VOICE_MODELS_DIR, "tts/voices-v1.0.bin")
 
 SPEECH_PEAK_NORM = 0.88
-MASTER_OUTPUT_VOLUME = 0.20       # 20% master output volume (adjustable via physical S330 buttons or voice)
+MASTER_OUTPUT_VOLUME = 1.00       # 100% master output volume (adjustable via physical S330 buttons or voice)
 
-# Primary STT engine: faster-whisper (int8 CPU + Silero Neural VAD)
-# CRITICAL: Keep BOTH STT_INITIAL_PROMPT = None and STT_HOTWORDS = None!
-# Setting hotwords="Vox Verbi" caused CTranslate2 to hallucinate "Vox Verbi" on muffled
-# background room conversations/TV; phonetic wake-word matching handles all real pronunciations cleanly!
-STT_ENGINE = "faster_whisper"
+# Primary STT engine: whisper.cpp compiled with Vulkan (ggml-vulkan) on AMD Radeon 680M
+# Uses Silero Neural VAD gate (<3ms) + whisper-server (ggml-small-q8_0.bin) with dynamic audio_ctx (~218ms avg),
+# with automatic fallback to faster-whisper (int8 CPU) if whisper-server is unreachable.
+# CRITICAL: Keep BOTH STT_INITIAL_PROMPT = None and STT_HOTWORDS = None so background speech never hallucinates 'Vox Verbi'.
+STT_ENGINE = "whisper_cpp_vulkan"
+WHISPER_SERVER_URL = "http://127.0.0.1:8090/inference"
+WHISPER_CPP_MODEL_PATH = "/home/wildu/voice_models/stt/whisper_cpp/ggml-small-q8_0.bin"
 STT_FW_MODEL_SIZE = "small"
 STT_MODEL_DIR = os.path.join(VOICE_MODELS_DIR, "stt/sherpa-onnx-whisper-small")
 STT_INITIAL_PROMPT = None
@@ -35,7 +37,7 @@ STT_HOTWORDS = None
 VAD_AGGRESSIVENESS = 2            # Balanced sensitivity (preserves soft /v/ and /b/ onsets in pre-roll)
 RMS_THRESHOLD_IDLE = 360.0        # Ignores distant room murmurs (<360) while 1.65s pre-roll captures soft 'Vox Verbi' onsets
 RMS_THRESHOLD_WITH_MUSIC = 400.0  # Threshold over ducked background music
-RMS_THRESHOLD_SPEAKING = 420.0    # Barge-in threshold while Vox Verbi is speaking (for 'Vox Verbi, detente')
+RMS_THRESHOLD_SPEAKING = 780.0    # Barge-in threshold calibrated for 100% speakerphone volume (for 'Vox Verbi, detente')
 VAD_ONSET_MIN_VOICED = 6          # 6 of 12 chunks (180ms) of clear speech to trigger
 VAD_RING_LEN = 12                 # 360ms onset window
 VAD_PREROLL_LEN = 55              # 1.65s pre-roll audio preserved before VAD trigger

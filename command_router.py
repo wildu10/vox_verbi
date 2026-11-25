@@ -48,14 +48,16 @@ WAKE_TARGETS_3 = [
     "vos ver bi", "box ver mi", "bos ver b", "vos ver b", "vox ver bi",
     "bos ber b", "voz ver mi", "pos ver mi", "boso better be", "vos better be",
     "boss better be", "mos ber bi", "was ber bi",
+    "box verb y", "bos verb y", "vos verb y", "vox verb y", "vox ver vi", "box ver vi",
 ]
 
 WAKE_TARGETS_2 = [
     "vox verbi", "vos verbi", "box verbi", "bos verbi", "voz verbi",
-    "boss berby", "boss verbi", "bos verb", "vox verb", "box berbi",
+    "boss berby", "boss verbi", "bos verb", "vox verb", "box verb", "box berbi",
     "bos berbi", "pos verbi", "bos berg", "vos verb", "bos barbi",
     "box barbi", "ghost burby", "ghost verbi", "ghost berbi", "gost verbi",
     "gost berbi", "vox berbi", "vox derbi", "vos pervi", "bos pervi",
+    "vox vervi", "box vervi", "bos vervi", "vos vervi", "box bervi", "vox bervi",
     "los berbi", "los verbis", "dos verbi", "dos berbi",
     "mos berbi", "mos verbi", "was berbi", "was verbi", "mas verbi",
     "pues verbi", "por verbi", "boso verbi",
@@ -63,7 +65,8 @@ WAKE_TARGETS_2 = [
 
 WAKE_TARGETS_1 = [
     "busverby", "busverbi", "bosberbi", "bosbergvi", "bosberg", "voxverbi",
-    "vosverbi", "boxverbi", "bosverby", "bosbiervi", "bosbierby", "busberby",
+    "vosverbi", "boxverbi", "boxverby", "bosverby", "bosbiervi", "bosbierby", "busberby",
+    "voxvervi", "boxvervi", "bosvervi", "vosvervi", "boxbervi", "voxbervi",
     "busverb", "bosverb", "ghostburby", "ghostberbi", "ghostverbi",
     "gostburby", "gostberbi", "gosberbi", "gosverbi", "oxverbi", "oxberbi",
     "osperbi", "osberbi", "obsberby", "obsverbi", "bosberti", "vosberti",
@@ -100,7 +103,8 @@ def _repair_fused_post_wake(rest: str) -> str:
     Repairs common Whisper syllable fusions right after 'Vox Verbi':
       - 'Bikin era Jesús' -> 'quién era Jesús'
       - 'cos la Biblia'   -> 'qué es la Biblia'
-      - 'Definity'        -> 'defínete'
+      - 'Definity' / 'define te' / 'definito' -> 'defínete'
+      - 'que es la fea'   -> 'qué es la fe'
     """
     if not rest:
         return ""
@@ -108,7 +112,14 @@ def _repair_fused_post_wake(rest: str) -> str:
     r = re.sub(r"^(?:bikin|vikin|pikin)\b", "quién", r, flags=re.IGNORECASE)
     r = re.sub(r"^(?:cos|kes|ques|case)\b", "qué es", r, flags=re.IGNORECASE)
     r = re.sub(r"^definitivamente([.!?]*)$", r"defínete\1", r, flags=re.IGNORECASE)
-    r = re.sub(r"\b(?:definity|definite|definirte|definitiva|de\s+finete)\b", "defínete", r, count=1, flags=re.IGNORECASE)
+    r = re.sub(
+        r"\b(?:definity|definite|definirte|definitiva|definito|de\s+finete|define\s+te|defini\s+te)\b",
+        "defínete",
+        r,
+        count=1,
+        flags=re.IGNORECASE,
+    )
+    r = re.sub(r"\b(?:que|qué)\s+es\s+la\s+fea\b", "qué es la fe", r, flags=re.IGNORECASE)
     return r.strip()
 
 
@@ -117,17 +128,28 @@ def _match_wake_at_start(words: list[str]) -> tuple[bool, str]:
         return False, ""
 
     # 0. Check fused syllable contractions on first 1-2 words:
-    #    e.g. "Mosbér Bikin era Jesús" -> words[0]="Mosbér", words[1]="Bikin"
-    #    or   "los verbicos la Biblia" -> words[0]="los", words[1]="verbicos"
+    #    e.g. "Boxverbipara." -> (True, "para")
+    #         "Mosbér Bikin era Jesús" -> words[0]="Mosbér", words[1]="Bikin"
+    #         "los verbicos la Biblia" -> words[0]="los", words[1]="verbicos"
     w0_clean = _strip_accents_basic(re.sub(r"[^\w]", "", words[0]))
+    m_fused1 = re.fullmatch(
+        r"(?:vox|vos|bos|box|voz|mos|was)[bv]er[bv][iy](para|parar|detente|deten|basta|silencio|definete)",
+        w0_clean,
+    )
+    if m_fused1:
+        rest = (m_fused1.group(1) + " " + " ".join(words[1:])).strip()
+        return True, _repair_fused_post_wake(rest)
+
     if len(words) >= 2:
         w1_clean = _strip_accents_basic(re.sub(r"[^\w]", "", words[1]))
         if re.fullmatch(r"(?:mos|bos|vos|box|vox|was|wos|pos|los|dos)ber", w0_clean) and re.match(r"^[bv]i(kin|quien|que)", w1_clean):
             tail_q = "quién" if "ki" in w1_clean or "qui" in w1_clean else "qué"
             rest = f"{tail_q} " + " ".join(words[2:])
             return True, _repair_fused_post_wake(rest)
-        if w0_clean in ("vox", "vos", "bos", "box", "voz", "los", "mos", "was", "dos") and re.match(r"^[bv]erbi(cos|kes|ques)$", w1_clean):
-            rest = "qué es " + " ".join(words[2:])
+        if w0_clean in ("vox", "vos", "bos", "box", "voz", "los", "mos", "was", "dos") and re.match(r"^[bv]er[bv]i(cos|kes|ques|para|detente)$", w1_clean):
+            suffix = re.sub(r"^[bv]er[bv]i", "", w1_clean)
+            lead = "qué es" if suffix in ("cos", "kes", "ques") else suffix
+            rest = f"{lead} " + " ".join(words[2:])
             return True, _repair_fused_post_wake(rest)
 
     best_sim = 0.0
@@ -154,7 +176,7 @@ def _match_wake_at_start(words: list[str]) -> tuple[bool, str]:
 
     if best_n > 0:
         rest = " ".join(words[best_n:]).lstrip(" ,.:;!?¿¡-")
-        rest = re.sub(r"^(?:mi|b|bi|vi)\b[\s,.:;!?¿¡-]*", "", rest, flags=re.IGNORECASE).lstrip(" ,.:;!?¿¡-")
+        rest = re.sub(r"^(?:mi|b|bi|vi|y|i)\b[\s,.:;!?¿¡-]*", "", rest, flags=re.IGNORECASE).lstrip(" ,.:;!?¿¡-")
         return True, _repair_fused_post_wake(rest)
 
     # Broad phonetic syllable matcher for 1 or 2 leading tokens
@@ -171,13 +193,13 @@ def _match_wake_at_start(words: list[str]) -> tuple[bool, str]:
                 "box", "vox", "bos", "bus", "vos", "voz", "mos", "was", "wos", "gh", "go", "ox",
             )
             bodies = (
-                "erb", "erbi", "erby", "verbi", "berbi", "verby", "berby",
+                "erb", "erbi", "erby", "verbi", "berbi", "verby", "berby", "vervi", "bervi",
                 "biervi", "bierby", "burb", "derb", "berg", "perv", "perb",
             )
             endings = ("bi", "by", "vi", "vy", "gy", "gi", "ti", "erbi", "erby", "erb", "erv", "erg", "is")
             if 6 <= len(norm) <= 13 and any(norm.startswith(s) for s in starts) and any(b in norm for b in bodies) and any(norm.endswith(e) for e in endings):
                 rest = " ".join(words[n:]).lstrip(" ,.:;!?¿¡-")
-                rest = re.sub(r"^(?:mi|b|bi|vi)\b[\s,.:;!?¿¡-]*", "", rest, flags=re.IGNORECASE).lstrip(" ,.:;!?¿¡-")
+                rest = re.sub(r"^(?:mi|b|bi|vi|y|i)\b[\s,.:;!?¿¡-]*", "", rest, flags=re.IGNORECASE).lstrip(" ,.:;!?¿¡-")
                 return True, _repair_fused_post_wake(rest)
 
     return False, ""
