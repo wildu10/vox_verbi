@@ -1,0 +1,11 @@
+[Unit]
+Description=Vox Verbi Automatic USB Content Importer (%I)
+After=asistente-vivo.service
+
+[Service]
+Type=oneshot
+User=root
+Environment="PYTHONPATH=/home/wildu/llama.cpp"
+Environment="HF_HUB_OFFLINE=1"
+Environment="TRANSFORMERS_OFFLINE=1"
+ExecStart=/bin/bash -c "sleep 2; sudo -u wildu PYTHONPATH=/home/wildu/llama.cpp /home/wildu/llama.cpp/venv/bin/python /home/wildu/llama.cpp/vox_verbi/scripts/vox_usb_importer.py"

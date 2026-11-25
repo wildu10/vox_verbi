@@ -43,6 +43,7 @@ def format_spoken_source(rec: Dict[str, Any]) -> str:
         ("fides et ratio", "la encíclica Fides et Ratio"),
         ("evangelii gaudium", "la exhortación Evangelii Gaudium"),
         ("mysterium fidei", "la encíclica Mysterium Fidei de San Pablo Sexto"),
+        ("comisión teológica internacional", "la Comisión Teológica Internacional"),
     ]
     for key, label in mag_docs:
         if key in c_lower:

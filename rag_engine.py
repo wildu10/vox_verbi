@@ -37,6 +37,7 @@ def tokenize_es(text: str) -> list[str]:
 # Document cue -> canonical short citation substring for precise Magisterial/Patristic targeting
 DOC_TARGET_MAP = [
     (r"\b(dei\s*verb\w*|de\s*verb\w*|dei\s*berb\w*|de\s*berb\w*|de\s*iberb\w*|deiberb\w*|iberb\w*|berbun\w*|david\s*boom)\b", "dei verbum"),
+    (r"\b(comisi\w*\s+teol\w*\s+internacional|cti\b|sinodalidad|sensus\s+fidei|reciprocidad\s+entre\s+fe|casa\s+comun|quo\s+vadis\s+humanitas)\b", "comisión teológica internacional"),
     (r"\b(lumen\s*[gjy]en[tc]i\w*)\b", "lumen gentium"),
     (r"\b(sacrosan\w*|sacro\s*san\w*|concilium)\b", "sacrosanctum concilium"),
     (r"\b(gaudi\w*\s*et\s*spes|gaudium)\b", "gaudium et spes"),
@@ -149,6 +150,19 @@ class RAGEngine:
             self._get_embedder()
         except Exception as e:
             logger.warning(f"Could not preload embedder: {e}")
+
+    def reload(self) -> int:
+        """Hot-reloads FAISS index, metadata, and BM25 index in memory after USB content import."""
+        self._cache.clear()
+        if os.path.exists(self.index_path) and os.path.exists(self.meta_path):
+            self.index = faiss.read_index(self.index_path)
+            with open(self.meta_path, "rb") as f:
+                self.metadata = pickle.load(f)
+        if self.bm25_path and os.path.exists(self.bm25_path):
+            with open(self.bm25_path, "rb") as f:
+                self.bm25 = pickle.load(f)
+        logger.info(f"Hot-reloaded RAG Engine: {len(self.metadata)} active theological records.")
+        return len(self.metadata)
 
     def _get_embedder(self):
         if self.embedder is None:

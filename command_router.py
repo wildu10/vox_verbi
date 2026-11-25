@@ -426,6 +426,15 @@ class CommandRouter:
         ]:
             self.routes.append({"command": cmd, "action": "STOP_ALL", "priority": 92})
 
+        for cmd in [
+            "vox verbi actualiza las fuentes", "vox verbi actualizar las fuentes",
+            "vox verbi actualiza las fuentes desde la usb", "vox verbi actualiza fuentes desde la usb",
+            "vox verbi importa los documentos de la usb", "vox verbi importar documentos de la usb",
+            "vox verbi importa contenido de la usb", "vox verbi actualiza la base de datos",
+            "vox verbi importa desde la usb", "vox verbi cargar documentos de la usb",
+        ]:
+            self.routes.append({"command": cmd, "action": "IMPORT_USB_CONTENT", "priority": 90})
+
         # 3. Guía Fundamental de Vox Verbi (12 canonical sections + natural questions)
         pres_mappings = [
             ("vox verbi muestrame para que fuiste creado", "COMPLETA"),

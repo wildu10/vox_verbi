@@ -500,6 +500,28 @@ class VoxVerbiApp:
                 mode = "RELATO" if action == "READ_RELATO" else "NORMAL"
                 self.speak_narrative(text, mode=mode)
                 return
+            elif action == "IMPORT_USB_CONTENT":
+                self.speak("Verificando memoria USB para incorporar nuevos documentos catequéticos.")
+                try:
+                    from .scripts.vox_usb_importer import import_from_usb
+                    res = import_from_usb(notify_service=False)
+                    if res.get("error"):
+                        self.speak("No se detectó una memoria USB con la carpeta de fuentes nuevas.")
+                    elif res.get("docs_added", 0) == 0:
+                        self.speak(
+                            f"La memoria USB fue revisada. Los {res.get('docs_found', 0)} documentos ya se encuentran "
+                            f"incorporados en la fuente de datos de Vox Verbi."
+                        )
+                    else:
+                        total_now = self.rag.reload()
+                        self.speak(
+                            f"Actualización completada. Se incorporaron {res['docs_added']} documentos nuevos con "
+                            f"{res['chunks_added']} pasajes teológicos. La base cuenta ahora con {total_now} registros."
+                        )
+                except Exception as e:
+                    logger.error(f"USB import error: {e}")
+                    self.speak("Ocurrió un inconveniente al procesar los documentos de la memoria USB.")
+                return
 
         duration_sec = self.state.inspect_and_set_duration(user_text)
         thematic_query = self.state.strip_duration_phrases(user_text)
@@ -553,6 +575,21 @@ def main():
     app = VoxVerbiApp()
     # Restore SIGTERM handler after pygame/SDL2 init so systemd stops/restarts cleanly in <0.2s
     signal.signal(signal.SIGTERM, lambda signum, frame: (_ for _ in ()).throw(KeyboardInterrupt()))
+
+    def _on_sighup(signum, frame):
+        def _reload_bg():
+            try:
+                tot = app.rag.reload()
+                logger.info(f"[SIGHUP] Hot-reloaded RAG corpus ({tot} records).")
+                if not app.mixer.is_busy() and not app.in_al_paraiso and not app.state.is_adoracion():
+                    app.speak("Se han incorporado nuevos documentos desde la memoria USB a la fuente de datos de Vox Verbi.")
+            except Exception as e:
+                logger.error(f"[SIGHUP] Reload error: {e}")
+        threading.Thread(target=_reload_bg, daemon=True).start()
+
+    if hasattr(signal, "SIGHUP"):
+        signal.signal(signal.SIGHUP, _on_sighup)
+
     hardware_hooks.start_s330_volume_buttons_listener(app.mixer)
     logger.info(f"VOX VERBI v3.5 initialized and ready (master_volume={int(round(app.mixer.master_volume * 100))}%).")
 

@@ -25,6 +25,8 @@ files_to_upload = [
     ("test_wake_and_stt.py", f"{REMOTE_PKG_DIR}/scripts/test_wake_and_stt.py"),
     ("run_live_benchmark.py", f"{REMOTE_PKG_DIR}/scripts/run_live_benchmark.py"),
     ("vox_wifi_manager.py", f"{REMOTE_PKG_DIR}/scripts/vox_wifi_manager.py"),
+    ("vox_usb_importer.py", f"{REMOTE_PKG_DIR}/scripts/vox_usb_importer.py"),
+    ("vox_clone_and_restore.sh", f"{REMOTE_PKG_DIR}/scripts/vox_clone_and_restore.sh"),
 ]
 
 client = paramiko.SSHClient()
